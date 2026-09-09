@@ -16,10 +16,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from pydantic import BaseModel, HttpUrl, field_validator
+from pydantic import BaseModel, field_validator
 
-from scanner import VulnScanner, ScanResult, Severity
+from backend.scanner import VulnScanner, ScanResult
 
 load_dotenv()
 log = structlog.get_logger()
