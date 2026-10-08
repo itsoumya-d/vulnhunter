@@ -527,8 +527,8 @@
           {!hasFindings ? (
             <div className="clean-banner">
               <div className="clean-icon">✅</div>
-              <h2>No Vulnerabilities Detected</h2>
-              <p>This repository passed all OWASP Top 10 checks across {result.files_scanned} files.</p>
+              <h2>No Findings Returned</h2>
+              <p>No findings were returned across {result.files_scanned} analyzed files. This automated review is not proof that the repository is secure.</p>
             </div>
           ) : (
             <div className="findings-section">
@@ -654,6 +654,11 @@
       }, [url]);
 
       const handleComplete = useCallback((r) => {
+        if (r.error != null) {
+          setErrorMsg(r.error);
+          setPhase('error');
+          return;
+        }
         setResult(r);
         setPhase('results');
       }, []);
@@ -765,3 +770,4 @@
   </script>
 </body>
 </html>
+

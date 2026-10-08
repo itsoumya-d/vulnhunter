@@ -142,7 +142,7 @@ async def _run_scan(scan_id: str, repo_url: str):
     )
     try:
         result = await scanner.scan(repo_url)
-        _scan_cache[scan_id]["status"] = "complete" if not result.error else "error"
+        _scan_cache[scan_id]["status"] = "complete" if result.error is None else "error"
         _scan_cache[scan_id]["result"] = result_to_out(scan_id, result)
     except Exception as e:
         log.error("scan_failed", scan_id=scan_id, error=str(e))
@@ -150,7 +150,7 @@ async def _run_scan(scan_id: str, repo_url: str):
         _scan_cache[scan_id]["result"] = ScanResultOut(
             scan_id=scan_id, repo_url=repo_url, repo_name=repo_url,
             files_scanned=0, findings=[], scan_summary="",
-            risk_score=0, risk_label="CLEAN",
+            risk_score=0, risk_label="INCOMPLETE",
             critical_count=0, high_count=0, medium_count=0, low_count=0,
             owasp_breakdown={}, scanned_at=datetime.now(timezone.utc).isoformat(),
             error=str(e),
@@ -233,3 +233,4 @@ import os as _os
 _static_dir = _os.path.join(_os.path.dirname(__file__), "..", "frontend")
 if _os.path.isdir(_static_dir):
     app.mount("/", StaticFiles(directory=_static_dir, html=True), name="frontend")
+
