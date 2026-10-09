@@ -91,6 +91,19 @@ FastAPI Backend (Python 3.12)
 
 **Score formula:** `min(100, Σ weights)` where CRITICAL=40, HIGH=20, MEDIUM=8, LOW=3, INFO=1 per finding.
 
+### Incomplete analysis
+
+Provider errors, unfinished responses, and invalid finding payloads produce an
+`error` result with `risk_label: "INCOMPLETE"`, never a clean scan. The API retains
+findings from successfully analyzed files, but `files_scanned` counts only those
+successful analyses. A partial score is not a complete repository assessment.
+The frontend shows the error screen so users can retry rather than displaying a
+successful report. Executive-summary failures alone use the existing local
+finding-count summary because the file analyses have already completed.
+
+Even a completed zero-finding analysis is not proof that a repository is secure.
+The file-count/size limits and model limitations still apply.
+
 ---
 
 ## 📁 Project Structure
@@ -150,6 +163,20 @@ The thesis: enterprise-grade security scanning shouldn't require a SIEM, a dedic
 
 ---
 
+## Offline regression tests
+
+With the backend requirements, pytest, and ruff already installed:
+
+```bash
+PYTHONPATH=. pytest backend/ -q
+ruff check --select E9,F backend/
+node --test frontend/test-result-handling.cjs
+```
+
+Tests use synthetic source files and fake provider replies. They do not fetch
+repositories, scan external targets, or contact the model. The frontend test
+executes the actual completion callback without fetching the React CDN.
+
 ## 📄 License
 
 MIT — see [LICENSE](LICENSE)
@@ -157,3 +184,4 @@ MIT — see [LICENSE](LICENSE)
 ---
 
 *Built by [Soumya Debnath](https://devpost.com/soumyadebnath1619) · Quantum Sprint 2026*
+

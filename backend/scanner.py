@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -102,6 +103,8 @@ class ScanResult:
 
     @property
     def risk_label(self) -> str:
+        if self.error is not None:
+            return "INCOMPLETE"
         if self.risk_score >= 75: return "CRITICAL"
         if self.risk_score >= 50: return "HIGH"
         if self.risk_score >= 25: return "MEDIUM"
@@ -215,6 +218,45 @@ Be thorough but precise. Only report real vulnerabilities, not theoretical ones.
 Return ONLY a JSON array of findings (empty array [] if none found). No prose, no markdown."""
 
 
+class AnalysisError(RuntimeError):
+    """A file did not receive a complete, valid analysis."""
+
+
+def _parse_findings(raw: str, path: str) -> list[Finding]:
+    """Validate the entire reply before accepting any of its findings."""
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+    items = json.loads(raw)
+    if not isinstance(items, list):
+        raise ValueError("Expected an array of findings")
+
+    findings = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise ValueError("Each finding must be an object")
+        for key in ("owasp_id", "owasp_name", "severity", "title", "description",
+                    "vulnerable_snippet", "recommended_fix"):
+            if not isinstance(item.get(key), str):
+                raise ValueError(f"Invalid finding field: {key}")
+        if item["owasp_id"] not in OWASP_CATEGORIES:
+            raise ValueError("Unknown OWASP category")
+        line = item.get("line_number")
+        if line is not None and (type(line) is not int or line < 1):
+            raise ValueError("Invalid line number")
+        cwe = item.get("cwe_id")
+        if cwe is not None and (not isinstance(cwe, str) or not cwe.strip()):
+            raise ValueError("Invalid CWE identifier")
+        findings.append(Finding(
+            owasp_id=item["owasp_id"], owasp_name=item["owasp_name"],
+            severity=Severity(item["severity"]), title=item["title"],
+            description=item["description"], file_path=path, line_number=line,
+            vulnerable_snippet=item["vulnerable_snippet"],
+            recommended_fix=item["recommended_fix"], cwe_id=cwe,
+        ))
+    return findings
+
+
 class VulnScanner:
     """Orchestrates repo fetching + AI analysis."""
 
@@ -246,42 +288,21 @@ Return a JSON array of findings (empty [] if none). Each finding must match the 
                 system=ANALYSIS_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
             )
-            raw = msg.content[0].text.strip()
-
-            # Strip markdown code fences if present
-            if raw.startswith("```"):
-                raw = re.sub(r"^```(?:json)?\s*", "", raw)
-                raw = re.sub(r"\s*```$", "", raw)
-
-            import json
-            items = json.loads(raw)
-            findings = []
-            for item in items:
-                try:
-                    findings.append(Finding(
-                        owasp_id    = item.get("owasp_id", "A00"),
-                        owasp_name  = item.get("owasp_name", OWASP_CATEGORIES.get(item.get("owasp_id", ""), "Unknown")),
-                        severity    = Severity(item.get("severity", "INFO")),
-                        title       = item.get("title", "Unnamed finding"),
-                        description = item.get("description", ""),
-                        file_path   = path,
-                        line_number = item.get("line_number"),
-                        vulnerable_snippet = item.get("vulnerable_snippet", ""),
-                        recommended_fix    = item.get("recommended_fix", ""),
-                        cwe_id      = item.get("cwe_id"),
-                    ))
-                except Exception as e:
-                    log.warning("finding_parse_error", error=str(e), item=item)
-            return findings
+            if msg.stop_reason not in ("end_turn", "stop_sequence"):
+                raise ValueError("Analysis response did not finish")
+            if not msg.content or any(block.type != "text" for block in msg.content):
+                raise ValueError("Expected text analysis output")
+            raw = "\n".join(block.text for block in msg.content).strip()
+            return _parse_findings(raw, path)
 
         except Exception as e:
             log.error("ai_analysis_failed", path=path, error=str(e))
-            return []
+            raise AnalysisError(f"Analysis failed for {path}") from e
 
     async def _generate_summary(self, repo_name: str, findings: list[Finding]) -> str:
         """Generate an executive summary of the scan."""
         if not findings:
-            return f"✅ No security vulnerabilities were detected in **{repo_name}**. The codebase follows secure coding practices for the OWASP Top 10 categories analyzed."
+            return f"No findings were returned for the analyzed files in **{repo_name}**. This automated review is not proof that the repository is secure."
 
         counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "INFO": 0}
         for f in findings:
@@ -345,6 +366,7 @@ Return only the summary text, no headers."""
 
         # Analyze files concurrently (batch of 8 to respect rate limits)
         all_findings: list[Finding] = []
+        failed_files = 0
         batch_size = 8
         file_items = list(files.items())
 
@@ -353,24 +375,38 @@ Return only the summary text, no headers."""
             batch_results = await asyncio.gather(*[
                 self._analyze_file(path, content)
                 for path, content in batch
-            ])
+            ], return_exceptions=True)
             for file_findings in batch_results:
-                all_findings.extend(file_findings)
+                if isinstance(file_findings, asyncio.CancelledError):
+                    raise file_findings
+                if isinstance(file_findings, Exception):
+                    failed_files += 1
+                else:
+                    all_findings.extend(file_findings)
 
         # Sort by severity
         sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
         all_findings.sort(key=lambda f: sev_order.get(f.severity.value, 5))
 
-        summary    = await self._generate_summary(repo_name, all_findings)
+        error = None
+        if failed_files:
+            error = (f"Analysis incomplete: {failed_files} of {len(files)} files could not "
+                     "be analyzed. Any findings are partial. Please retry the scan.")
+            summary = error
+        else:
+            summary = await self._generate_summary(repo_name, all_findings)
         risk_score = self._compute_risk_score(all_findings)
 
-        log.info("scan_complete", repo=repo_name, findings=len(all_findings), risk_score=risk_score)
+        log.info("scan_incomplete" if error else "scan_complete", repo=repo_name,
+                 findings=len(all_findings), risk_score=risk_score, failed_files=failed_files)
 
         return ScanResult(
             repo_url      = repo_url,
             repo_name     = repo_name,
-            files_scanned = len(files),
+            files_scanned = len(files) - failed_files,
             findings      = all_findings,
             scan_summary  = summary,
             risk_score    = risk_score,
+            error         = error,
         )
+
