@@ -39,6 +39,19 @@ SKIP_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+OWASP_LLM_CATEGORIES = {
+    "LLM01": "Prompt Injection",
+    "LLM02": "Sensitive Information Disclosure",
+    "LLM03": "Supply Chain Vulnerabilities",
+    "LLM04": "Data and Model Poisoning",
+    "LLM05": "Improper Output Handling",
+    "LLM06": "Excessive Agency",
+    "LLM07": "System Prompt Leakage",
+    "LLM08": "Vector and Embedding Weaknesses",
+    "LLM09": "Misinformation",
+    "LLM10": "Unbounded Consumption",
+}
+
 OWASP_CATEGORIES = {
     "A01": "Broken Access Control",
     "A02": "Cryptographic Failures",
@@ -50,6 +63,7 @@ OWASP_CATEGORIES = {
     "A08": "Software & Data Integrity Failures",
     "A09": "Security Logging & Monitoring Failures",
     "A10": "Server-Side Request Forgery",
+    **OWASP_LLM_CATEGORIES,
 }
 
 
