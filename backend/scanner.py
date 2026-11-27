@@ -15,10 +15,25 @@ from enum import Enum
 from typing import Optional
 
 import httpx
-import structlog
-from anthropic import AsyncAnthropic
+try:
+    import structlog
+    log = structlog.get_logger()
+except ImportError:
+    import logging
+    class StructlogFallback:
+        def __init__(self, logger): self._logger = logger
+        def bind(self, **kw): return self
+        def info(self, msg, *a, **kw): self._logger.info(msg)
+        def warning(self, msg, *a, **kw): self._logger.warning(msg)
+        def error(self, msg, *a, **kw): self._logger.error(msg)
+        def debug(self, msg, *a, **kw): self._logger.debug(msg)
+        def exception(self, msg, *a, **kw): self._logger.exception(msg)
+    log = StructlogFallback(logging.getLogger("vulnhunter"))
 
-log = structlog.get_logger()
+try:
+    from anthropic import AsyncAnthropic
+except ImportError:
+    AsyncAnthropic = None
 
 GITHUB_API = "https://api.github.com"
 MAX_FILE_BYTES = 80_000   # skip files larger than this

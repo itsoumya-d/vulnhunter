@@ -11,17 +11,33 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Optional
 
-import structlog
-from dotenv import load_dotenv
+try:
+    import structlog
+    log = structlog.get_logger()
+except ImportError:
+    import logging
+    class StructlogFallback:
+        def __init__(self, logger): self._logger = logger
+        def bind(self, **kw): return self
+        def info(self, msg, *a, **kw): self._logger.info(msg)
+        def warning(self, msg, *a, **kw): self._logger.warning(msg)
+        def error(self, msg, *a, **kw): self._logger.error(msg)
+        def debug(self, msg, *a, **kw): self._logger.debug(msg)
+        def exception(self, msg, *a, **kw): self._logger.exception(msg)
+    log = StructlogFallback(logging.getLogger("vulnhunter"))
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 from backend.scanner import VulnScanner, ScanResult
-
-load_dotenv()
-log = structlog.get_logger()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GITHUB_TOKEN      = os.getenv("GITHUB_TOKEN")          # optional — raises rate limit 60→5000/hr
